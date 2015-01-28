@@ -6,43 +6,22 @@ _     = require 'underscore'
 _.str = require 'underscore.string'
 async = require 'asyncawait/async'
 await = require 'asyncawait/await'
+util  = require 'util'
 Promise = require 'bluebird'
 request = Promise.promisifyAll(require('request'))
 fs      = Promise.promisifyAll(require('fs'))
 
 class Feedly
-  tokenFile = ""
   authInfo = {}
   authHeader = {}
   refreshRequestOptions = {}
 
-  constructor: (_tokenFile) ->
-    tokenFile = _tokenFile
-
+  constructor: () ->
     authInfo =
-      access_token:  fs.readFileSync(tokenFile, 'utf-8')
-      refresh_token: process.env.FEEDLY_REFRESH_TOKEN
-      client_id:     process.env.FEEDLY_CLIENT_ID
-      client_secret: process.env.FEEDLY_CLIENT_SECRET
+      access_token:  process.env.FEEDLY_ACCESS_TOKEN
 
     authHeader =
         Authorization: "Bearer " + authInfo.access_token
-
-  refreshFeedlyToken: () ->
-    request.postAsync(
-      uri:     'https://cloud.feedly.com/v3/auth/token'
-      headers: authHeader
-      json:
-        refresh_token: authInfo.refresh_token,
-        client_id:     authInfo.client_id
-        client_secret: authInfo.client_secret
-        grant_type:    'refresh_token'
-    )
-    .spread (response, body) ->
-      if response.statusCode is 200
-        fs.writeFileAsync(tokenFile, body.access_token)
-      else
-        console.error "response error: #{response.statusCode}"
 
   fetchFeeds: () ->
     request.getAsync(
@@ -130,26 +109,11 @@ class Entry
       res = JSON.parse(body)
       return res.data.url
 
-  makeTweetText: () ->
-    source = @splitSourceName()
-    title = @escapeTitle()
-    text = if source then "#{source} #{title}" else title
-
-    return async () =>
-      text = @breakText(text)
-      url = await @shortenUrl()
-      return "#{text} #{url}"
-    .call()
-
-  makeFeedText: (isTwitter) ->
-    if isTwitter is true
-      return @makeTweetText()
-    else
-      return "#{@sourceName} #{@title} #{@url}"
+  makeFeedText: () ->
+    return "#{@sourceName} #{@title} #{@url}"
 
 processTask = (robot, envelope) ->
-  isTwitter = if process.env.HUBOT_TWITTER_KEY then true else false
-  f = new Feedly './feedly_access_token.txt'
+  f = new Feedly
 
   async () ->
     feeds = await f.fetchFeeds()
@@ -179,12 +143,10 @@ processTask = (robot, envelope) ->
       )
 
     messages =
-      await _.map(sendEntries, (e) -> e.makeFeedText(isTwitter))
+      await _.map(sendEntries, (e) -> e.makeFeedText())
 
     await _.map(messages, (m)-> robot.send(envelope, m))
-    await f.markAsRead _.map(markAsReadEntries, (e)-> (e.id))
-
-    await f.refreshFeedlyToken()
+    #await f.markAsRead _.map(markAsReadEntries, (e)-> (e.id))
   .call()
 
 module.exports = (robot) ->
